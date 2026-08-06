@@ -1,0 +1,59 @@
+steps:
+  # 1. Build the container image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: [
+      'build', 
+      '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/ca-automation:$COMMIT_SHA',
+      '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/ca-automation:latest',
+      '.'
+    ]
+
+  # 2. Push the container image to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/ca-automation', '--all-tags']
+
+  # 3. Update the Subordinate Cloud Run Jobs across multiple regions
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        IMAGE_URL="us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/ca-automation:$COMMIT_SHA"
+        for loc in ${_SUB_LOCATIONS}; do
+          echo "Updating subordinate jobs in $$loc..."
+          gcloud run jobs update ca-rotator-job --image="$$IMAGE_URL" --region="$$loc" --quiet || echo "ca-rotator-job not found in $$loc"
+          gcloud run jobs update ca-cleanup-job --image="$$IMAGE_URL" --region="$$loc" --quiet || echo "ca-cleanup-job not found in $$loc"
+        done
+
+  # 4. Update the Root Rotator Cloud Run Job
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'jobs'
+      - 'update'
+      - 'ca-root-rotator-job'
+      - '--image'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/ca-automation:$COMMIT_SHA'
+      - '--region'
+      - 'us-central1'
+
+  # 5. Update the Root Cleanup Cloud Run Job
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'jobs'
+      - 'update'
+      - 'ca-root-cleanup-job'
+      - '--image'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/ca-automation:$COMMIT_SHA'
+      - '--region'
+      - 'us-central1'
+
+substitutions:
+  _SUB_LOCATIONS: 'us-central1 europe-north1'
+
+images:
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/ca-automation:$COMMIT_SHA'
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/ca-automation:latest'
